@@ -2232,7 +2232,7 @@ class MusicBot(discord.Client):
 
         else:
             self.safe_print("[Command] {0.id}/{0.name} ({1})".format(message.author, message_content))
-
+	    self.safe_delete_message(message)
         user_permissions = self.permissions.for_user(message.author)
 
         argspec = inspect.signature(handler)
