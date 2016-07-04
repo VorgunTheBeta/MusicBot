@@ -55,6 +55,24 @@ class SkipState:
         self.skippers.add(skipper)
         self.skip_msgs.add(msg)
         return self.skip_count
+        
+class LikeState:
+    def __init__(self):
+        self.likers = set()
+        self.like_msgs = set()
+    
+    @property
+    def like_count(self):
+        return len(self.likers)
+    
+    def reset(self):
+        self.likers.clear()
+        self.like_msgs.clear()
+        
+    def add_liker(self, liker, msg):
+        self.likers.add(liker)
+        self.like_msgs.add(msg)
+        return self.like_count
 
 
 class Response:
@@ -380,6 +398,7 @@ class MusicBot(discord.Client):
     async def on_play(self, player, entry):
         await self.update_now_playing(entry)
         player.skip_state.reset()
+        player.like_state.reset()
         if entry.url not in self.autoplaylist:
             idcheck = re.match(r"(https:\/\/|http:\/\/)", entry.url)
             if idcheck == None:
@@ -1365,7 +1384,7 @@ class MusicBot(discord.Client):
             song_total = str(timedelta(seconds=player.current_entry.duration)).lstrip('0').lstrip(':')
             prog_str = '`[%s/%s]`' % (song_progress, song_total)
             player = await self.get_player(channel)
-            if player.current_entry.song_url:
+            if player.current_entry.url:
                 song_url = player.current_entry.song_url
             else:
                 song_url = '?' # player.current_entry.song_url #str(player.playlist.entries[0].url)
@@ -1530,11 +1549,8 @@ class MusicBot(discord.Client):
                 print("Something strange is happening.  "
                       "You might want to restart the bot if it doesn't start working.")
 
-        if (author.id == self.config.owner_id and not self.unskip_state) or (permissions.instaskip and not self.unskip_state):
-            player.skip()  # check autopause stuff here
-            await self._manual_delete_check(message)
-            return
-        elif author.id == self.config.owner_id and self.unskip_state:
+        
+        if author.id == self.config.owner_id and self.unskip_state:
             await self.send_typing(channel)
 
             def check(m):
@@ -1570,9 +1586,10 @@ class MusicBot(discord.Client):
             m.deaf or m.self_deaf or m.id in [self.config.owner_id, self.user.id]))
 
         num_skips = player.skip_state.add_skipper(author.id, message)
-
+        num_likes - player.like_state.like_count
+        
         skips_remaining = min(self.config.skips_required,
-                              sane_round_int(num_voice * self.config.skip_ratio_required)) - num_skips
+                              sane_round_int(num_voice * self.config.skip_ratio_required)) - num_skips + num_likes
 
         if skips_remaining <= 0:
             player.skip()  # check autopause stuff here
@@ -1776,6 +1793,79 @@ class MusicBot(discord.Client):
 
         return await self.cmd_undo(channel, player)
 
+    async def cmd_source(self, player, channel):
+        """
+        Usage {command_prefix}source
+        Gets the source of the song that is currently playing
+        """
+        source_text = "Now Playing: **%s** %s\n" % (player.current_entry.title, player.current_entry.url)
+        return Response(source_text, reply=True)
+		
+    async def cmd_sauce(self, player, channel):
+        """
+        Usage {command_prefix}source
+        Gets the source of the song that is currently playing
+        """
+        
+        return await self.cmd_source(player, channel)
+    
+    async def cmd_updoot(self, player, channel, author, message, voice_channel):
+       """
+       Usage:
+           {command_prefix}updoot
+
+       Updoots the current song.
+       """
+
+       if player.is_stopped:
+           raise CommandError("Can't updoot! The player is not playing!")
+           
+       if not player.current_entry:  # Do more checks here to see
+           print("Something strange is happening.  You might want to restart the bot if its not working.")
+
+
+       num_voice = sum(1 for m in voice_channel.voice_members if not (
+           m.deaf or m.self_deaf or m.id in [self.config.owner_id, self.user.id]))
+
+       num_likes = player.like_state.add_liker(author.id, message)
+
+        
+           # TODO: When a song gets skipped, delete the old x needed to skip messages
+       return Response(
+        'your like for **{}** was acknowledged.'
+        '\n**{}** {} like this song.'.format(
+        player.current_entry.title,
+        num_likes,
+        'person' if num_likes == 1 else 'people'
+        ),
+        reply=True
+        )
+
+    async def cmd_oops(self, player, channel, author, pos_song=None):
+        """
+        Usage:
+            {command_prefix}perms
+
+        Sends the user a list of their permissions.
+        """
+        if not pos_song:
+            last = len(player.playlist.entries) - 1
+            e = player.playlist.entries[last]
+            if author == e.meta.get('author', None):
+                player.playlist.entries.remove(e)
+                return Response("**Mistake removed.** Song **%s** has been removed" % e.title)
+            else:
+                return Response("**DENIED** Song **%s** does not belong to you" % e.title)
+        
+        else:
+            position = int(pos_song) - 1
+            e = player.playlist.entries[position]
+            if author == e.meta.get('author', None):
+                player.playlist.entries.remove(e)
+                return Response("**Mistake removed.** Song **%s** has been removed" % e.title)
+            else:
+                return Response("**DENIED** Song **%s** does not belong to you" % e.title)
+                
     async def cmd_clean(self, message, channel, server, author, search_range=50):
         """
         Usage:
@@ -1992,7 +2082,7 @@ class MusicBot(discord.Client):
 
         nick = ' '.join([nick, *leftover_args])
 
-        if not nick == 'Default' or nick == 'None':
+        if nick == 'Default' or nick == 'None':
             nick = None
         try:
             await self.change_nickname(server.me, nick)
